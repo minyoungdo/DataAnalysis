@@ -1,0 +1,331 @@
+---
+title: "Data Science Class Project"
+author: "Minyoung Do"
+date: "8/24/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, result = 'hide', cache = TRUE, message = FALSE, warning = FALSE, error = FALSE)
+library(tidyverse)
+library(haven)
+library(wesanderson)
+library(ggridges)
+library(ggpubr)
+library(skimr)
+library(lavaan)
+library(mediation)
+library(kableExtra)
+library(ggsci)
+library(summarytools)
+library(mediation)
+library(MASS)
+library(gmodels)
+library(gplots)
+library(corrplot)
+library(flextable)
+library(rcompanion)
+
+a <- read_dta("GSS2018.dta")
+
+a %>%
+  dplyr::select("fepol")
+```
+
+
+```{r demographics data setup}
+gss2018 <- read_dta("GSS2018.dta") %>%
+  # selecting demographics variables
+  dplyr::select("id", "age", "sex", "race", "relig", "realrinc", "educ")
+
+# transforming all categorical variables into factors for the meaningful level names
+gss2018$sex <- as_factor(gss2018$sex, order = F)
+gss2018$race <- as_factor(gss2018$race, order = F)
+gss2018$relig <- as_factor(gss2018$relig, order = F)
+```
+
+## DEMOGRAPHICS OVERVIEW
+
+```{r demographics}
+age_plot <- gss2018 %>%
+  dplyr::select("age") %>%
+  drop_na() %>%
+  ggplot(aes(x = age)) +
+  theme_classic() +
+  geom_density(fill = "lavender", alpha = .6, scale = 1.5) +
+  scale_x_continuous(breaks = c(25, 50, 75)) +
+  scale_y_discrete(expand = c(0.01, 0)) + 
+  labs(subtitle = "Age Distribution of\nGSS Respondents (2018)") +
+  theme_ridges()
+
+income_plot <- gss2018 %>%
+  dplyr::select("realrinc") %>%
+  filter(realrinc != "NA") %>%
+    ggplot(aes(x = realrinc, fill = realrinc)) + 
+    geom_histogram(binwidth = 1, stat = "count") +
+    theme_classic() +
+    labs(x = "Respondent's Income", y = "# of Respondents")
+
+sex_plot <- gss2018 %>%
+  dplyr::select("sex") %>%
+  drop_na() %>%
+    ggplot(aes(x = sex, fill = sex)) + 
+    geom_histogram(binwidth = 1, stat = "count") +
+    theme_classic() +
+    labs(x = "Sex", y = "# of Respondents") +
+  scale_fill_manual(name = "Answers", values = wes_palette(n = 2, name = "GrandBudapest1"))
+
+race_plot <- gss2018 %>%
+  dplyr::select("race") %>%
+  drop_na() %>%
+    ggplot(aes(x = race, fill = race)) + 
+    geom_histogram(binwidth = 1, stat = "count") +
+    theme_classic() +
+    labs(x = "Race", y = "# of Respondents") +
+  scale_fill_manual(name = "Answers", values = wes_palette(n = 4, name = "GrandBudapest1"))
+
+relig_plot <- gss2018 %>%
+  dplyr::select("relig") %>%
+  filter(relig != "NA", relig != "DK") %>%
+  ggplot(aes(x = relig, fill = relig)) + 
+  geom_histogram(binwidth = 1, stat = "count") +
+    theme_classic()
+
+ggarrange(age_plot, sex_plot, race_plot, income_plot, legend = "none")
+relig_plot
+```
+
+Total respondents in the dataset: 2348
+
+after dating cleaning process, the number of respondents is 518.
+
+## Analysis
+
+```{r analysis data setup}
+gss_sex <- read_dta("GSS2018.dta") %>%
+  dplyr::select("id", "age", "sex", "race", "relig", "realrinc", 
+         "educ", "rgroomed", "rlooks", "sexfreq",
+         "relatsex", "quallife", "satlife", "satsoc") %>%
+  drop_na()
+
+gss_sex_factor <- read_dta("GSS2018.dta") %>%
+  dplyr::select("id", "age", "sex", "race", "relig", "realrinc", 
+         "educ", "rgroomed", "rlooks", "sexfreq",
+         "relatsex", "quallife", "satlife", "satsoc") %>%
+  drop_na() %>%
+  as_factor()
+```
+
+```{r include = FALSE}
+print(dfSummary(gss_sex_factor[, -1], style = 'grid', graph.magnif = 0.75), method = "render")
+```
+
+## A function to create plots
+
+```{r plot function}
+gss_bar <- function(data, x) {
+    ggplot(data, aes(x = .data[[x]])) +
+    geom_bar(aes(fill = .data[[x]]), position = position_dodge()) +
+    theme_light() +
+    theme(plot.title = element_text(hjust = 0.5),
+          plot.subtitle = element_text(hjust = 0.5),
+          # intentionally removing x axis labels in order to avoid cramped-up unreadable labels
+          axis.text.x = element_blank(),
+          axis.ticks.x = element_blank())
+  }
+```
+
+## Plots
+
+```{r}
+# Sex frequency and sex
+gss_bar(gss_sex_factor, "sexfreq") +
+  labs(x = "Frequency of sex last year", y = "# of Respondents") +
+  facet_wrap(~sex) +
+  scale_fill_manual(name = "Answers", values = pal_jco()(7))
+
+# Proportion plot
+ggplot(data = gss_sex_factor, aes(x = sexfreq, y = ..prop.., group = 1)) + 
+  geom_bar(aes(fill = factor(..x..)), stat = "count") +
+  facet_wrap(~sex) +
+  theme_minimal() +
+  scale_fill_manual(name = "Frequency", values = pal_jco()(7)) +
+  geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ), stat= "count", vjust = -.5)
+
+# Sex frequency and relationship status
+gss_bar(gss_sex_factor, "sexfreq") +
+  labs(x = "Frequency of sex last year", y = "# of Respondents") +
+  facet_wrap(~relatsex) +
+  scale_fill_manual(name = "Answers", values = pal_jco()(7))
+
+# Proportion plot
+ggplot(data = gss_sex_factor, aes(x = sexfreq, y = ..prop.., group = 1)) + 
+  geom_bar(aes(fill = factor(..x..)), stat = "count") +
+  facet_wrap(~relatsex) +
+  theme_minimal() +
+  scale_fill_manual(name = "Frequency", values = pal_jco()(7)) +
+  geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ), stat= "count", vjust = -.5)
+```
+
+```{r}
+# Sex frequency and sex
+gss_bar(gss_sex_factor, "quallife") +
+  labs(x = "Quality of Life", y = "# of Respondents") +
+  facet_wrap(~sex) +
+  scale_fill_manual(name = "Answers", values = pal_jco()(7))
+
+ggplot(data = gss_sex_factor, aes(x = quallife, y = ..prop.., group = 1)) + 
+  geom_bar(aes(fill = factor(..x..)), stat = "count") +
+  facet_wrap(~sex) +
+  theme_minimal() +
+  scale_fill_manual(name = "Frequency", values = pal_jco()(7)) +
+  geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ), stat= "count", vjust = -.5)
+
+# Sex frequency and relationship status
+gss_bar(gss_sex_factor, "quallife") +
+  labs(x = "Quality of Life", y = "# of Respondents") +
+  facet_wrap(~sexfreq) +
+  scale_fill_manual(name = "Answers", values = pal_jco()(7))
+
+# Proportion plot
+ggplot(data = gss_sex_factor, aes(x = quallife, y = ..prop.., group = 1)) + 
+  geom_bar(aes(fill = factor(..x..)), stat = "count") +
+  facet_wrap(~sexfreq) +
+  theme_minimal() +
+  scale_fill_manual(name = "Frequency", values = pal_jco()(7)) +
+  geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ), stat= "count", vjust = -.5)
+```
+
+
+```{r}
+# proportions of rows, columns, totals, chi-square
+CrossTable(gss_sex$sexfreq, gss_sex$quallife,
+           expected = TRUE)
+
+# contingency table & chi-square tests
+a <- table(gss_sex$sexfreq, gss_sex$sex)[1:7, ]
+chisq.test(a)
+
+b <- table(gss_sex$rgroomed, gss_sex$sex)[1:5, ]
+chisq.test(b)
+
+c <- table(gss_sex$rlooks, gss_sex$sex)[1:5, ]
+chisq.test(c)
+
+d <- table(gss_sex$relatsex, gss_sex$sex)[1:2, ]
+chisq.test(d)
+
+e <- table(gss_sex$sexfreq, gss_sex$quallife)[1:7, 1:5]
+chisq.test(e)
+
+plot_e <- table(gss_sex_factor$sexfreq, gss_sex_factor$quallife)[1:7, 1:5]
+  
+balloonplot(t(plot_e), main = "", xlab = "Quality of Life", ylab = "Frequency of Sex",
+            label = T, show.margins = F)
+```
+
+```{r}
+# contingency table
+e <- table(gss_sex$sexfreq, gss_sex$quallife)[1:7, 1:5]
+# running chi-square test
+chisq.test(e)
+
+# effect size
+cramerV(e)
+# running power analysis with Cramer's V effect size = 0.1202
+pwr::pwr.chisq.test(N = 518, df = 4, w = 0.1202, sig.level = 0.95)
+```
+
+I apply the `chisq.test` function to the contingency table, and found the p-value to be 0.1875. As the p-value 0.1875 is greater than the .05 significance level, we can't reject the null hypothesis that the frequency of sex is independent of the quality of life.
+
+When power is high, smaller risk of committing Type 2 error; Since power is 1 - type 2 error. The data provides convincing evidence that there is a difference in the frequency of sexual intercourse last year between male and female who are 18 or over.
+
+# Mediation Analysis
+
+In the mediation analysis, we are building a model where we take into consideration different dependant variables
+and the other independant variables while making sure to point out the intercorrelations that we spotted in the
+previous section.
+
+```{r}
+# function to turn lm object into a good looking table
+lm_table <- function(x) {
+  summary(x) %>%
+  broom::tidy() %>%
+  kable() %>%
+  kable_styling("striped", full_width = F) %>%
+  row_spec(0, bold = T)
+}
+
+# simple regression models for individual relationships
+sex_fit <- lm(sexfreq ~ sex, data = gss_sex)
+lm_table(sex_fit)
+
+sex_fit2 <- lm(rgroomed ~ sex, data = gss_sex)
+lm_table(sex_fit2)
+
+sex_fit3 <- lm(rgroomed ~ sexfreq, data = gss_sex)
+lm_table(sex_fit3)
+
+fit_c <- lm(quallife ~ sex, data = gss_sex)
+lm_table(fit_c)
+
+# interaction of sex and sexfreq
+interaction_1 <- lm(quallife ~ sex*sexfreq, data = gss_sex)
+lm_table(interaction_1)
+
+# interaction of sex and rgroomed
+interaction_2 <- lm(quallife ~ sex*rgroomed, data = gss_sex)
+lm_table(interaction_2)
+
+# multiple regression of the full model
+full_mod <- lm(quallife ~ sex + rgroomed + sexfreq, data = gss_sex)
+lm_table(full_mod)
+
+```
+
+ACME: Average Causal Mediation Effects (`total effect` - `direct effect (c)` = a + b)
+ADE: Average Direct Effects (`total effect` - `indirect effect (a + b)` = c, 
+--> ADE is $c'$ when running regression with all the variables.
+
+### interpretation
+- control/treated: treatment condition
+- ACME: `ACME (treated)` estimate (0.09) is the estimated average increase in the DV among the treatment group that arrives as a result of the mediator rather than directly from the IV `treatment`. 
+- `Total Effect` = `ACME (average)` + `ADE (average)`
+- `ACME (average)` = average of `ACME (treated)` and `ACME (control)`
+- `Prop. Mediated (control)` means `ACME (control)` divided by `Total Effect`
+
+### Final Conclusion
+
+Treatment in the framing experiment may have increased emotional response (`anxiety`), which in turn made subjects more likely to send a message to Congress.
+
+## Checking for indirect effects of grooming and attractiveness
+
+```{r mediation}
+### Structural equation model setup
+model.sex <- 'rgroomed ~ a1*sex
+              sexfreq ~ a2*sex + d21*rgroomed
+              quallife ~ b1*rgroomed + b2*sexfreq + c*sex
+                    
+              ind_eff1 := a1 * b1
+              ind_eff2:= a2 * b2 
+              direct := c'
+
+# running sem analysis and bootstrap 3000 times
+# suppress warnings of unsuccesful boostrapped models
+fit_sex <- suppressWarnings(
+  sem(model = model.sex, data = gss_sex, se = "boot",
+      bootstrap = 3000, likelihood = "wishart")
+  )
+
+# summary of the sem model
+summary(fit_sex, standardized = T, rsq = T)
+
+# final output table of parameter estimates
+parameterestimates(fit_sex, boot.ci.type = "bca.simple", standardized = TRUE) %>%
+  dplyr::select(lhs, op, rhs, label, est, se, z, pvalue) %>%
+  flextable() %>%
+  bg(bg = "#DDDDDD", part = "header") %>%
+  autofit()
+```
+
+In this model, we also look for the indirect effect of sex and rgroomed on the quality of life. As well as the indirect effect of sex and sex frequency on the dependant variable. The results show that there is a statistical signifance for all the indirect effects as well as the direct effect of sex if we set the significance level to 10%. But if we stick to 5%, we can assume that the indirect effect of sex and rgroomed are significant in explaining the quality of life as an independant variable. All the variables (directly) have a negative estimate, which suggests that they all contribute to increase the quality of life.
